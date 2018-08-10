@@ -1114,6 +1114,27 @@ class SSHLibrary(object):
         """
         self.current.create_local_ssh_tunnel(local_port, remote_host, remote_port)
 
+    def create_remote_ssh_tunnel(self, remote_port, target_host, target_port):
+        """
+        The keyword uses the existing connection to set up remote port forwarding
+        (the openssh -R option) from a remote port through a tunneled
+        connection to a destination reachable from the SSH client machine.
+
+        The example below illustrates the forwarding from the remote machine, of
+        the connection on port 80 of an inaccessible server (secure.server.com)
+        by connecting to the remote SSH server (remote.server.com) and makes it
+        available on the port 9191:
+
+        | `Open Connection`          | remote.server.com | prompt=$          |
+        | `Login`                    | johndoe           | secretpasswd      |
+        | `Create Remote SSH Tunnel` | 9191              | secure.server.com | 80 |
+
+        The tunnel is active as long as the connection is open.
+
+        New in SSHLibrary 3.1.1
+        """
+        self.current.create_remote_ssh_tunnel(remote_port, target_host, target_port)
+
     def _legacy_output_options(self, stdout, stderr, rc):
         if not is_string(stdout):
             return stdout, stderr, rc

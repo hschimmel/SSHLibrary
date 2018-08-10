@@ -83,6 +83,9 @@ class JavaSSHClient(AbstractSSHClient):
     def create_local_ssh_tunnel(self, local_port, remote_host, remote_port):
         self.client.createLocalPortForwarder(int(local_port), remote_host, int(remote_port))
 
+    def create_remote_ssh_tunnel(self, remote_port, target_host, target_port):
+        self.client.requestRemotePortForwarding('', int(remote_port), target_host, int(target_port))
+
 
 class Shell(AbstractShell):
 

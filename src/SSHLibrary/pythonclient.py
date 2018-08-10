@@ -12,7 +12,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-
+import socket
 import time
 import ntpath
 import select
@@ -60,7 +60,8 @@ paramiko.sftp_client.SFTPClient._log = _custom_log
 
 
 class PythonSSHClient(AbstractSSHClient):
-    tunnel = None
+    local_tunnel = None
+    remote_tunnel = None
 
     def _get_client(self):
         client = paramiko.SSHClient()
@@ -121,19 +122,29 @@ class PythonSSHClient(AbstractSSHClient):
         return Shell(self.client, self.config.term_type,
                      self.config.width, self.config.height)
 
-    def create_local_ssh_tunnel(self, local_port, remote_host, remote_port):
-        self._create_local_port_forwarder(local_port, remote_host, remote_port)
+    def create_local_ssh_tunnel(self, forwarded_port, target_host, target_port):
+        self._create_local_port_forwarder(forwarded_port, target_host, target_port)
 
-    def _create_local_port_forwarder(self, local_port, remote_host, remote_port):
+    def _create_local_port_forwarder(self, forwarded_port, target_host, target_port):
         transport = self.client.get_transport()
         if not transport:
             raise AssertionError("Connection not open")
-        self.tunnel = LocalPortForwarding(int(remote_port), remote_host, transport)
-        self.tunnel.forward(int(local_port))
+        self.local_tunnel = LocalPortForwarding(int(target_port), target_host, transport)
+        self.local_tunnel.forward(int(forwarded_port))
+
+    def create_remote_ssh_tunnel(self, forwarded_port, target_host, target_port):
+        self._create_remote_port_forwarder(forwarded_port, target_host, target_port)
+
+    def _create_remote_port_forwarder(self, forwarded_port, target_host, target_port):
+        transport = self.client.get_transport()
+        if not transport:
+            raise AssertionError("Connection not open")
+        self.remote_tunnel = RemotePortForwarding(int(target_port), target_host, transport)
+        self.remote_tunnel.reverse_forward(int(forwarded_port))
 
     def close(self):
-        if self.tunnel:
-            self.tunnel.close()
+        if self.local_tunnel:
+            self.local_tunnel.close()
         return super(PythonSSHClient, self).close()
 
 
@@ -256,16 +267,16 @@ class RemoteCommand(AbstractCommand):
 
 
 class LocalPortForwarding:
-    def __init__(self, port, host, transport):
+    def __init__(self, target_port, target_host, transport):
         self.server = None
-        self.port = port
-        self.host = host
+        self.target_port = target_port
+        self.target_host = target_host
         self.transport = transport
 
     def forward(self, local_port):
         class SubHandler(LocalPortForwardingHandler):
-            port = self.port
-            host = self.host
+            port = self.target_port
+            host = self.target_host
             ssh_transport = self.transport
 
         self.server = SocketServer.ThreadingTCPServer(('', local_port), SubHandler)
@@ -291,6 +302,7 @@ class LocalPortForwardingHandler(SocketServer.BaseRequestHandler):
             return
         if chan is None:
             return
+
         while True:
             r, w, x = select.select([self.request, chan], [], [])
             if self.request in r:
@@ -305,3 +317,48 @@ class LocalPortForwardingHandler(SocketServer.BaseRequestHandler):
                 self.request.send(data)
         chan.close()
         self.request.close()
+
+
+class RemotePortForwarding:
+    def __init__(self, target_port, target_host, transport):
+        self.server = None
+        self.target_port = target_port
+        self.target_host = target_host
+        self.transport = transport
+
+    def reverse_forward(self, forwarded_port):
+        tunnel_thread = threading.Thread(target=self._reverse_forward_tunnel, args=(int(forwarded_port), self.target_host, int(self.target_port), self.transport))
+        tunnel_thread.setDaemon(True)
+        tunnel_thread.start()
+
+    def _reverse_forward_tunnel(self, forwarded_port, target_host, target_port, transport):
+        transport.request_port_forward('', forwarded_port)
+        while True:
+            chan = transport.accept(1000)
+            if chan is None:
+                continue
+            thr = threading.Thread(target=self._remote_forward_handler, args=(chan, target_host, target_port))
+            thr.setDaemon(True)
+            thr.start()
+
+    def _remote_forward_handler(self, chan, host, port):
+        sock = socket.socket()
+        try:
+            sock.connect((host, port))
+        except Exception:
+            return
+
+        while True:
+            r, w, x = select.select([sock, chan], [], [])
+            if sock in r:
+                data = sock.recv(1024)
+                if len(data) == 0:
+                    break
+                chan.send(data)
+            if chan in r:
+                data = chan.recv(1024)
+                if len(data) == 0:
+                    break
+                sock.send(data)
+        chan.close()
+        sock.close()
