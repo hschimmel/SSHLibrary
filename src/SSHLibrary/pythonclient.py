@@ -34,6 +34,7 @@ except ImportError:
 from .abstractclient import (AbstractShell, AbstractSFTPClient,
                              AbstractSSHClient, AbstractCommand,
                              SSHClientException, SFTPFileInfo)
+from .pythonforward import LocalPortForwarding
 from .utils import is_bytes, is_list_like, is_unicode
 
 
@@ -190,10 +191,10 @@ class SFTPClient(AbstractSFTPClient):
         attributes = self._client.stat(path)
         return SFTPFileInfo('', attributes.st_mode)
 
-    def _create_missing_remote_path(self, path):
+    def _create_missing_remote_path(self, path, mode):
         if is_unicode(path):
             path = path.encode(self._encoding)
-        return super(SFTPClient, self)._create_missing_remote_path(path)
+        return super(SFTPClient, self)._create_missing_remote_path(path, mode)
 
     def _create_remote_file(self, destination, mode):
         destination = destination.encode(self._encoding)
